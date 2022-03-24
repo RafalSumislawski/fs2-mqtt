@@ -18,7 +18,7 @@ package net.sigusr.mqtt.impl.protocol
 
 import cats.effect.implicits._
 import cats.effect.std.Console
-import cats.effect.{Concurrent, Fiber, Temporal}
+import cats.effect.{Concurrent, Fiber, Resource, Temporal}
 import cats.implicits._
 import com.comcast.ip4s.SocketAddress
 import fs2.io.net.{Network, Socket}
@@ -64,19 +64,22 @@ object Transport {
         .through(StreamEncoder.many[Frame](Codec[Frame].asEncoder).toPipeByte)
         .through(socket.writes) // TODO either use or remove these config values (transportConfig.writeTimeout)
         .onComplete {
-          Stream.eval(connector.stateSignal.set(Disconnected))
+          Stream.eval(Console[F].println("outgoing complete") >> connector.stateSignal.set(Disconnected))
         }
         .compile
         .drain
 
     def incoming(socket: Socket[F]): F[Unit] =
-      socket
-        .reads // TODO either use or remove these config values (transportConfig.numReadBytes, transportConfig.readTimeout)
+//      socket
+//        .reads // TODO either use or remove these config values (transportConfig.numReadBytes, transportConfig.readTimeout)
+       Stream.repeatEval(socket.read(8192))
+         .evalTap(c => Console[F].println(s"Chunk $c"))
+         .unNoneTerminate.unchunks
         .through(StreamDecoder.many[Frame](Codec[Frame].asDecoder).toPipeByte)
         .through(tracingPipe(In(transportConfig.traceMessages)))
         .through(connector.in)
-        .onComplete {
-          Stream.eval(connector.stateSignal.set(Disconnected))
+        .onFinalizeCase { caze =>
+          socket.isOpen.flatMap(isOpen => Console[F].println(s"$caze incoming complete; $isOpen")) >> connector.stateSignal.set(Disconnected)
         }
         .compile
         .drain
@@ -100,22 +103,27 @@ object Transport {
       def pump(socket: Socket[F]): F[Unit] =
         for {
           _ <- connector.stateSignal.set(Connected)
-          _ <- outgoing(socket).race(incoming(socket)).race(closeSignalWatcher)
+          _ <- outgoing(socket).race(incoming(socket)).race(closeSignalWatcher(socket))
         } yield ()
-
 
 
       retryingOnAllErrors(policy, publishError) {
         Network[F].client(SocketAddress(transportConfig.host, transportConfig.port)).use{ socket =>
-          transportConfig.tlsConfig.fold(pump(socket)) { tlsConfig =>
-            tlsConfig
-              .contextOf
-              .flatMap{ tlsContext =>
-                val builder = tlsContext.clientBuilder(socket).withParameters(tlsConfig.tlsParameters)
-                traceTLS(transportConfig.traceMessages).fold(builder)(builder.withLogging)
-                  .build
-                  .use(pump)
-              }
+          Resource.make(
+            socket.localAddress.flatMap(a => Console[F].println(s"opened $a").as(a))
+          )(
+            a => Console[F].println(s"closing $a")
+          ).use { _ =>
+            transportConfig.tlsConfig.fold(pump(socket)) { tlsConfig =>
+              tlsConfig
+                .contextOf
+                .flatMap { tlsContext =>
+                  val builder = tlsContext.clientBuilder(socket).withParameters(tlsConfig.tlsParameters)
+                  traceTLS(transportConfig.traceMessages).fold(builder)(builder.withLogging)
+                    .build
+                    .use(pump)
+                }
+            }
           }
         }
       } >> connector.stateSignal.get.flatMap {
