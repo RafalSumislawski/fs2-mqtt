@@ -9,5 +9,6 @@ case class TransportConnector[F[_]](
     in: Pipe[F, Frame, Unit],
     out: Stream[F, Frame],
     stateSignal: SignallingRef[F, ConnectionState],
-    closeSignal: SignallingRef[F, Boolean]
+    closeSignal: SignallingRef[F, Boolean],
+    stopSignal: SignallingRef[F, Boolean]
 )

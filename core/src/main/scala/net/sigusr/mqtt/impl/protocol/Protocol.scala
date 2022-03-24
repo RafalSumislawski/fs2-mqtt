@@ -216,7 +216,7 @@ object Protocol {
       outbound: Stream[F, Frame] =
         Stream.fromQueueUnterminated(frameQueue).through(outboundMessagesInterpreter(inFlightOutBound, stateSignal, pingTicker))
 
-      _ <- transport(TransportConnector[F](inbound, outbound, stateSignal, closeSignal))
+      _ <- transport(TransportConnector[F](inbound, outbound, stateSignal, closeSignal, stopSignal))
 
     } yield new Protocol[F] {
 

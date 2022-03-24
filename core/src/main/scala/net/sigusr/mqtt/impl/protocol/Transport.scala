@@ -18,7 +18,7 @@ package net.sigusr.mqtt.impl.protocol
 
 import cats.effect.implicits._
 import cats.effect.std.Console
-import cats.effect.{Concurrent, Fiber, Resource, Temporal}
+import cats.effect.{Concurrent, Fiber, Temporal}
 import cats.implicits._
 import com.comcast.ip4s.SocketAddress
 import fs2.io.net.{Network, Socket}
@@ -70,11 +70,11 @@ object Transport {
         .drain
 
     def incoming(socket: Socket[F]): F[Unit] =
-//      socket
-//        .reads // TODO either use or remove these config values (transportConfig.numReadBytes, transportConfig.readTimeout)
-       Stream.repeatEval(socket.read(8192))
-         .evalTap(c => Console[F].println(s"Chunk $c"))
-         .unNoneTerminate.unchunks
+    //      socket
+    //        .reads // TODO either use or remove these config values (transportConfig.numReadBytes, transportConfig.readTimeout)
+      Stream.repeatEval(socket.read(8192))
+        .evalTap(c => Console[F].println(s"Chunk $c"))
+        .unNoneTerminate.unchunks
         .through(StreamDecoder.many[Frame](Codec[Frame].asDecoder).toPipeByte)
         .through(tracingPipe(In(transportConfig.traceMessages)))
         .through(connector.in)
@@ -84,8 +84,11 @@ object Transport {
         .compile
         .drain
 
-    def closeSignalWatcher(socket: Socket[F]): F[Unit] =
-      connector.closeSignal.discrete.evalMap(if (_) socket.endOfOutput else Concurrent[F].pure(())).compile.drain
+    def closeSignalWatcher(): F[Unit] =
+      connector.closeSignal.discrete.filter(_ == true).take(1).compile.drain
+
+    def stopSignalWatcher(): F[Unit] =
+      connector.stopSignal.discrete.filter(_ == true).take(1).compile.drain
 
     def loop(): F[Unit] = {
 
@@ -103,18 +106,16 @@ object Transport {
       def pump(socket: Socket[F]): F[Unit] =
         for {
           _ <- connector.stateSignal.set(Connected)
-          _ <- outgoing(socket).race(incoming(socket)).race(closeSignalWatcher(socket))
+          _ <- outgoing(socket)
+            .race(incoming(socket))
+            .race(closeSignalWatcher())
+            .race(stopSignalWatcher())
         } yield ()
-
 
       retryingOnAllErrors(policy, publishError) {
         Network[F].client(SocketAddress(transportConfig.host, transportConfig.port)).use{ socket =>
-          Resource.make(
-            socket.localAddress.flatMap(a => Console[F].println(s"opened $a").as(a))
-          )(
-            a => Console[F].println(s"closing $a")
-          ).use { _ =>
-            transportConfig.tlsConfig.fold(pump(socket)) { tlsConfig =>
+          for {
+            result <- transportConfig.tlsConfig.fold(pump(socket)) { tlsConfig =>
               tlsConfig
                 .contextOf
                 .flatMap { tlsContext =>
@@ -123,12 +124,18 @@ object Transport {
                     .build
                     .use(pump)
                 }
+            }.attempt
+            stop <- connector.stopSignal.get
+            close <- connector.closeSignal.get
+            _ <- connector.closeSignal.set(false)
+            _ <- (stop, close, result) match {
+              case (true, _, _) => Concurrent[F].unit // complete successfully => don't retry
+              case (false, true, _) => Concurrent[F].raiseError(new Exception("close signal"))
+              case (false, false, Left(t)) => Concurrent[F].raiseError(t)
+              case (false, false, Right(_)) => Concurrent[F].raiseError(new Exception("unexpected"))
             }
-          }
+          } yield ()
         }
-      } >> connector.stateSignal.get.flatMap {
-        case Disconnected => connector.closeSignal.set(false) >> loop()
-        case _            => Concurrent[F].unit
       }
     }
 
