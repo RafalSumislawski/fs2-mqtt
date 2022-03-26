@@ -21,7 +21,7 @@ import cats.effect.std.Queue
 import cats.implicits._
 import fs2.concurrent.SignallingRef
 import fs2.{INothing, Pipe, Pull, Stream}
-import net.sigusr.mqtt.api.ConnectionState.{Connected, Disconnected, Error, SessionStarted}
+import net.sigusr.mqtt.api.ConnectionState.{Connected, Error, Fresh, SessionStarted}
 import net.sigusr.mqtt.api.Errors.{ConnectionFailure, ProtocolError}
 import net.sigusr.mqtt.api.QualityOfService.{AtLeastOnce, AtMostOnce, ExactlyOnce}
 import net.sigusr.mqtt.api._
@@ -198,7 +198,7 @@ object Protocol {
       stopSignal <- SignallingRef[F, Boolean](false)
       inFlightOutBound <- AtomicMap[F, Int, Frame]
       pendingResults <- AtomicMap[F, Int, Deferred[F, Result]]
-      stateSignal <- SignallingRef[F, ConnectionState](Disconnected)
+      stateSignal <- SignallingRef[F, ConnectionState](Fresh)
       closeSignal <- SignallingRef[F, Boolean](false)
       pingAcknowledged <- Ref.of[F, Boolean](true)
       pingTicker <- Ticker(sessionConfig.keepAlive.toLong, pingOrDisconnect(pingAcknowledged, frameQueue, closeSignal))

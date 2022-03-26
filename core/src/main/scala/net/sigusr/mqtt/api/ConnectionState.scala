@@ -23,6 +23,8 @@ import scala.concurrent.duration.FiniteDuration
 sealed trait ConnectionState
 object ConnectionState {
 
+  case object Fresh extends ConnectionState
+
   case class Connecting(nextDelay: FiniteDuration, retriesSoFar: Int) extends ConnectionState
 
   case class Error(error: Errors) extends ConnectionState
@@ -34,8 +36,9 @@ object ConnectionState {
   case object SessionStarted extends ConnectionState
 
   implicit val showTransportStatus: Show[ConnectionState] = Show.show {
+    case Fresh            => "Fresh"
     case Disconnected     => "Disconnected"
-    case Connecting(_, _) => s"Connecting"
+    case Connecting(_, _) => "Connecting"
     case Connected        => "Connected"
     case SessionStarted   => "Session started"
     case Error(_)         => "Error"

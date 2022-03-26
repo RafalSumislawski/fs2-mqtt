@@ -34,7 +34,9 @@ package object examples {
         case Error(ConnectionFailure(reason)) =>
           putStrLn(s"${Console.RED}${reason.show}${Console.RESET}")
         case Error(ProtocolError) =>
-          putStrLn(s"${Console.RED}Ṕrotocol error${Console.RESET}")
+          putStrLn(s"${Console.RED}Protocol error${Console.RESET}")
+        case Disconnected =>
+          putStrLn(s"${Console.BLUE}Transport fresh${Console.RESET}")
         case Disconnected =>
           putStrLn(s"${Console.BLUE}Transport disconnected${Console.RESET}")
         case Connecting(nextDelay, retriesSoFar) =>
